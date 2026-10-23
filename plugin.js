@@ -2,14 +2,14 @@
 
 // Plugin de Kino: Latanime (latanime.org)
 // Catálogo de anime con doblaje latino, castellano y subtitulado.
-// Soporta Inicio (Home), Exploración (Browse), Búsqueda (Search), Episodios y Reproducción con extractores directos y captura vía navegador.
+// Solución de imágenes para evitar el bloqueo Hotlink/403 de Cloudflare en Kino TV.
+// Exporta Inicio (home), Navegación (browse), Categorías (categories), Buscador (search), Episodios y Reproducción (resolve).
 
 const BASE_URL = "https://latanime.org";
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 horas
 
 // ──────────────────────────────────────────────────────────────
-// HELPERS GENERALES Y PARSING
+// HELPERS GENERALES Y PARSING DE IMÁGENES
 // ──────────────────────────────────────────────────────────────
 
 function fullUrl(path) {
@@ -35,6 +35,27 @@ function decodeEntities(str) {
 function cleanText(html) {
   if (!html) return "";
   return decodeEntities(html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " "));
+}
+
+/**
+ * Corrige el bloqueo Hotlink (HTTP 403 Forbidden) de Cloudflare en Kino TV.
+ * Al pasar la imagen por el CDN proxy de DuckDuckGo, se entrega directamente
+ * a la app de Kino (Glide/Android TV) sin bloqueos ni encabezados restringidos.
+ */
+function safeImageUrl(url) {
+  if (!url) return undefined;
+  let clean = String(url).trim();
+  if (!clean.startsWith("http://") && !clean.startsWith("https://")) {
+    if (clean.startsWith("//")) clean = "https:" + clean;
+    else if (clean.startsWith("/")) clean = BASE_URL + clean;
+    else return undefined;
+  }
+  if (clean.includes("capblank.png")) return undefined;
+
+  if (clean.includes("latanime.org")) {
+    return "https://proxy.duckduckgo.com/iu/?u=" + encodeURIComponent(clean);
+  }
+  return clean;
 }
 
 function base64Decode(b64) {
@@ -79,14 +100,13 @@ async function fetchHtml(url) {
 }
 
 // ──────────────────────────────────────────────────────────────
-// EXTRACCIÓN DE TARJETAS DE ANIME
+// EXTRACCIÓN DE TARJETAS DE ANIME CON PORTADA
 // ──────────────────────────────────────────────────────────────
 
 function parseAnimeCards(html) {
   const items = [];
   const seen = new Set();
   
-  // Expresión para capturar bloques de enlace a /anime/
   const regex = /<a[^>]+href=["'](https:\/\/latanime\.org\/anime\/([^"'/]+))["'][^>]*>([\s\S]*?)<\/a>/gi;
   let match;
 
@@ -110,18 +130,23 @@ function parseAnimeCards(html) {
     }
     title = title.replace(/\s*—\s*Latanime/i, "").replace(/\s*-\s*Latanime/i, "").trim();
 
-    // Imagen de portada
-    let poster = "";
-    const imgMatch = inner.match(/data-src=["']([^"']+)["']/i) || inner.match(/src=["']([^"']+)["']/i);
-    if (imgMatch) {
-      poster = imgMatch[1];
-      if (poster.includes("capblank.png")) {
-        const altImg = inner.match(/data-src=["'](https:[^"']+\.(?:jpg|png|webp)[^"']*)["']/i);
-        if (altImg) poster = altImg[1];
-      }
+    if (!title || title.length < 2) continue;
+
+    // Extracción de imagen de portada (data-src / src)
+    let rawPoster = "";
+    const dataSrc = inner.match(/data-src=["']([^"']+)["']/i);
+    const normalSrc = inner.match(/src=["']([^"']+)["']/i);
+
+    if (dataSrc && !dataSrc[1].includes("capblank.png")) {
+      rawPoster = dataSrc[1];
+    } else if (normalSrc && !normalSrc[1].includes("capblank.png")) {
+      rawPoster = normalSrc[1];
+    } else {
+      const anyImg = inner.match(/https:\/\/latanime\.org\/(?:thumbs|assets)\/[^"']+\.(?:jpg|png|webp)/i);
+      if (anyImg) rawPoster = anyImg[0];
     }
 
-    if (!title || title.length < 2) continue;
+    const poster = safeImageUrl(rawPoster);
 
     const badges = [];
     if (/latino/i.test(slug) || /latino/i.test(title)) badges.push("Latino");
@@ -132,12 +157,51 @@ function parseAnimeCards(html) {
       ref: url,
       title: title,
       kind: "series",
-      poster: poster || undefined,
+      poster: poster,
       badges: badges.length > 0 ? badges : undefined
     });
   }
 
   return items;
+}
+
+// ──────────────────────────────────────────────────────────────
+// CAPACIDADES: CATEGORÍAS (MOSAICOS DE KINO CON IMAGEN)
+// ──────────────────────────────────────────────────────────────
+
+export async function categories() {
+  return [
+    {
+      id: "latino",
+      title: "Anime en Audio Latino",
+      ref: "cat:latino",
+      art: "https://proxy.duckduckgo.com/iu/?u=https%3A%2F%2Flatanime.org%2Fthumbs%2Fimagen%2Fone-piece-heroinas-1791913474.webp"
+    },
+    {
+      id: "castellano",
+      title: "Anime en Castellano",
+      ref: "cat:castellano",
+      art: "https://proxy.duckduckgo.com/iu/?u=https%3A%2F%2Flatanime.org%2Fassets%2Fimg%2Fserie%2Fportada%2Fbleach-sennen-kessen-hen-s4-latino-1788070469.jpg"
+    },
+    {
+      id: "emision",
+      title: "En Emisión Semanal",
+      ref: "cat:emision",
+      art: "https://proxy.duckduckgo.com/iu/?u=https%3A%2F%2Flatanime.org%2Fassets%2Fimg%2Fserie%2Fportada%2Fmushoku-tensei-jobless-reincarnation-temporada-3-backdrop-1785082116.webp"
+    },
+    {
+      id: "accion",
+      title: "Acción y Aventura",
+      ref: "cat:accion",
+      art: "https://proxy.duckduckgo.com/iu/?u=https%3A%2F%2Flatanime.org%2Fthumbs%2Fimagen%2Fcyberpunk-edgerunners-s2-castellano-1792522790.jpg"
+    },
+    {
+      id: "isekai",
+      title: "Isekai y Fantasía",
+      ref: "cat:isekai",
+      art: "https://proxy.duckduckgo.com/iu/?u=https%3A%2F%2Flatanime.org%2Fassets%2Fimg%2Fserie%2Fportada%2Fyoujo-senki-temporada-2-backdrop-1785336054.webp"
+    }
+  ];
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -232,6 +296,8 @@ export async function browse(ref, cursor) {
     targetUrl = `${BASE_URL}/animes?genero=castellano&page=${page}`;
   } else if (ref === "cat:accion") {
     targetUrl = `${BASE_URL}/animes?genero=accion&page=${page}`;
+  } else if (ref === "cat:isekai") {
+    targetUrl = `${BASE_URL}/animes?genero=isekai&page=${page}`;
   } else if (ref && ref.startsWith("cat:")) {
     const cat = ref.replace("cat:", "");
     targetUrl = `${BASE_URL}/animes?genero=${encodeURIComponent(cat)}&page=${page}`;
@@ -259,21 +325,19 @@ export async function search(query) {
   const q = (typeof query === "string" ? query : (query && query.q ? query.q : "")).trim();
   if (!q) return [];
 
-  // Buscar en el directorio por query
   const searchUrl = `${BASE_URL}/animes?buscar=${encodeURIComponent(q)}`;
   const html = await fetchHtml(searchUrl);
   if (!html) return [];
 
   const items = parseAnimeCards(html);
 
-  // Filtrar o priorizar por similitud si hay resultados
   const qTokens = q.toLowerCase().split(/\s+/).filter(Boolean);
   const matched = items.filter(it => {
     const titleLow = it.title.toLowerCase();
     return qTokens.every(tok => titleLow.includes(tok));
   });
 
-  return matched.length > 0 ? matched : items.slice(0, 30);
+  return (matched.length > 0 ? matched : items).slice(0, 30);
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -297,9 +361,9 @@ export async function episodes(ref) {
                 html.match(/<meta\s+name=["']description["']\s+content=["']([^"']+)["']/i);
   const overview = descM ? decodeEntities(descM[1]) : "";
 
-  // Poster
+  // Poster optimizado
   const imgM = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i);
-  const poster = imgM ? imgM[1] : "";
+  const poster = imgM ? safeImageUrl(imgM[1]) : undefined;
 
   // Extraer enlaces a los capítulos (/ver/...)
   const epRegex = /<a[^>]+href=["'](https:\/\/latanime\.org\/ver\/([^"'/]+))["'][^>]*>([\s\S]*?)<\/a>/gi;
@@ -313,7 +377,6 @@ export async function episodes(ref) {
     if (seenUrls.has(epUrl)) continue;
     seenUrls.add(epUrl);
 
-    // Extraer número de episodio del slug: "slug-episodio-12"
     const numM = epSlug.match(/episodio-(\d+)/i);
     const num = numM ? parseInt(numM[1], 10) : epList.length + 1;
 
@@ -327,14 +390,13 @@ export async function episodes(ref) {
     });
   }
 
-  // Ordenar episodios de forma ascendente (1, 2, 3...)
   epList.sort((a, b) => a.number - b.number);
 
   return {
     series: {
       title: title || "Anime",
       overview: overview || undefined,
-      poster: poster || undefined
+      poster: poster
     },
     episodes: epList
   };
@@ -351,7 +413,6 @@ export async function resolve(ref) {
     throw new Error("No se pudo cargar la página del capítulo");
   }
 
-  // Extraer todos los servidores de reproducción (data-player en Base64)
   const regexPlayers = /<a[^>]*class=["'][^"']*play-video[^"']*["'][^>]*data-player=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
   const servers = [];
   let match;
@@ -372,7 +433,6 @@ export async function resolve(ref) {
     throw new Error("No se encontraron servidores de video disponibles para este capítulo");
   }
 
-  // Intentar resolver en orden preferente
   for (const srv of servers) {
     const targetUrl = srv.url;
 
@@ -422,8 +482,7 @@ export async function resolve(ref) {
       } catch {}
     }
 
-    // 3. Captura con navegador incrustado de Kino para reproductores dinámicos
-    // (Playmogo, Savefiles, Hexload, Streamwish, Byse, Mixdrop...)
+    // 3. Captura con navegador incrustado de Kino
     if (typeof kino !== "undefined" && kino.browser && typeof kino.browser.capture === "function") {
       try {
         const cap = await kino.browser.capture(targetUrl, {
@@ -446,7 +505,6 @@ export async function resolve(ref) {
     }
   }
 
-  // Si no se pudo capturar automáticamente, devolver el primer embed seguro disponible
   const fallback = servers[0];
   return {
     url: fallback.url,
