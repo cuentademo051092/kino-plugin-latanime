@@ -1,0 +1,41 @@
+{
+  "id": "latanime",
+  "name": "Latanime",
+  "version": "1.0.0",
+  "apiVersion": 6,
+  "entry": "plugin.js",
+  "icon": "icon.png",
+  "color": "#E11D48",
+  "description": "Anime en audio latino, castellano y subtitulado en español desde latanime.org. Catálogo, estrenos en emisión y temporadas completas.",
+  "author": "Comunidad Kino",
+  "homepage": "https://latanime.org",
+  "hosts": [
+    "latanime.org",
+    "*.latanime.org",
+    "playmogo.com",
+    "*.playmogo.com",
+    "hexload.com",
+    "*.hexload.com",
+    "savefiles.com",
+    "*.savefiles.com",
+    "voe.sx",
+    "*.voe.sx",
+    "mp4upload.com",
+    "*.mp4upload.com",
+    "mixdrop.top",
+    "bysewihe.com"
+  ],
+  "streamHosts": "any",
+  "browser": true,
+  "capabilities": [
+    "home",
+    "browse",
+    "search",
+    "episodes",
+    "resolve"
+  ],
+  "categories": [
+    "anime",
+    "series"
+  ]
+}
